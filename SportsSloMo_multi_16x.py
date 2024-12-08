@@ -8,6 +8,9 @@ import numpy as np
 from torch.nn import functional as F
 from train_log.RIFE_HDv3 import Model
 from skimage.color import rgb2yuv
+import lpips
+from torchvision import transforms
+from PIL import Image
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -73,6 +76,19 @@ def calculate_psnr(pred_frame, gt_frame):
     PIXEL_MAX = 255.0
     return 20 * math.log10(PIXEL_MAX / math.sqrt(mse))
 
+def load_image_lpips(image_path):
+    img = Image.open(image_path).convert('RGB')
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
+    return transform(img).unsqueeze(0)
+
+def lpips(img0, img1):
+    img0 = load_image_lpips(img0)
+    img1 = load_image_lpips(img1)
+    return loss_fn_alex(img0, img1).item()
+
 def benchmark_clip(clip_number):
     """Benchmark a single clip."""
     clip_dir = os.path.join(BASE_DIR, f'clip_{clip_number}')
@@ -81,6 +97,7 @@ def benchmark_clip(clip_number):
         return None
     
     psnr_list = []
+    lpips_list = []
     frame_files = sorted(os.listdir(clip_dir))
     
     # Process frames with stride 4
@@ -113,8 +130,9 @@ def benchmark_clip(clip_number):
             pred_np = (np.round(pred.detach().cpu().numpy().transpose(1, 2, 0) * 255)).astype('uint8')
             psnr = calculate_psnr(pred_np, gt)
             psnr_list.append(psnr)
+            lpips_list.append(lpips(pred_np, gt))
     
-    return np.mean(psnr_list) if psnr_list else None
+    return np.mean(psnr_list) if psnr_list else None, np.mean(lpips_list) if lpips_list else None
 
 def main():
     """Main function to run benchmarking across all clips."""
