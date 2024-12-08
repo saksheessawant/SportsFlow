@@ -30,9 +30,10 @@ print("Loaded v3.x HD model.")
 BASE_DIR = '/scratch/rrm9598/hpml/acv/SportsSloMo/SportsSloMo_frames/'
 FRAME_HEIGHT = 720
 FRAME_WIDTH = 1280
-CLIP_START = 6235
-# CLIP_END = 7443
-CLIP_END = 6285
+# CLIP_START = 6235
+# CLIP_END = 6285
+CLIP_START = 7235
+CLIP_END = 7443
 
 def load_frame(path):
     """Load and preprocess a frame."""
