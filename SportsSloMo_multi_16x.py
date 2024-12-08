@@ -119,6 +119,37 @@ def calculate_lpips(img1, img2):
     
     return lpips_value.item()
 
+def calculate_ie(pred, gt):
+    """
+    Calculate Interpolation Error (IE) between predicted and ground truth frames.
+    
+    Args:
+    pred: Predicted frame (numpy array or torch tensor)
+    gt: Ground truth frame (numpy array or torch tensor)
+    
+    Returns:
+    ie: Interpolation Error value
+    """
+    # Ensure inputs are numpy arrays
+    if isinstance(pred, torch.Tensor):
+        pred = pred.cpu().numpy()
+    if isinstance(gt, torch.Tensor):
+        gt = gt.cpu().numpy()
+    
+    # Ensure the images are in the range [0, 255]
+    if pred.max() <= 1.0:
+        pred = pred * 255.0
+    if gt.max() <= 1.0:
+        gt = gt * 255.0
+    
+    # Calculate absolute difference
+    diff = np.abs(pred.astype(np.float32) - gt.astype(np.float32))
+    
+    # Calculate mean absolute error
+    ie = np.mean(diff)
+    
+    return ie
+
 def benchmark_clip(clip_number):
     """Benchmark a single clip."""
     clip_dir = os.path.join(BASE_DIR, f'clip_{clip_number}')
@@ -129,6 +160,7 @@ def benchmark_clip(clip_number):
     psnr_list = []
     lpips_list = []
     ssim_list = []
+    ie_list = []
     frame_files = sorted(os.listdir(clip_dir))
     
     # Process frames with stride 4
@@ -163,26 +195,30 @@ def benchmark_clip(clip_number):
             psnr_list.append(psnr)
             lpips_list.append(calculate_lpips(pred_np, gt))
             ssim_list.append(calculate_ssim(img0, img1))
+            ie_list.append(calculate_ie(pred_np, gt))
     
-    return np.mean(psnr_list) if psnr_list else None, np.mean(lpips_list) if lpips_list else None, np.mean(ssim_list) if ssim_list else None
+    return np.mean(psnr_list) if psnr_list else None, np.mean(lpips_list) if lpips_list else None, np.mean(ssim_list) if ssim_list else None, np.mean(ie_list) if ie_list else None
 
 def main():
     """Main function to run benchmarking across all clips."""
     results_psnr = []
     results_lpips = []
     results_ssim = []
+    results_ie = []
     
     for clip_num in range(CLIP_START, CLIP_END + 1):
         print(f"Processing clip {clip_num}...")
-        avg_psnr, avg_lpips, avg_ssim = benchmark_clip(clip_num)
+        avg_psnr, avg_lpips, avg_ssim, avg_ie = benchmark_clip(clip_num)
         if avg_psnr is not None:
             results_psnr.append(avg_psnr)
         if avg_lpips is not None:
             results_lpips.append(avg_lpips)
         if avg_ssim is not None:
             results_ssim.append(avg_ssim)
-        if avg_psnr is not None and avg_lpips is not None and avg_ssim is not None:
-            print(f"Clip {clip_num} Average PSNR: {avg_psnr:.2f}, Average LPIPS: {avg_lpips:.2f}, Average SSIM: {avg_ssim:.2f}")
+        if avg_ie is not None:
+            results_ie.append(avg_ie)
+        if avg_psnr is not None and avg_lpips is not None and avg_ssim is not None and avg_ie is not None:
+            print(f"Clip {clip_num} Average PSNR: {avg_psnr:.2f}, Average LPIPS: {avg_lpips:.2f}, Average SSIM: {avg_ssim:.2f}, Average IE: {avg_ie:.2f}")
         else:
             print(f"Clip {clip_num} had no valid results.")
     
@@ -190,9 +226,11 @@ def main():
         overall_psnr = np.mean(results_psnr)
         overall_lpips = np.mean(results_lpips)
         overall_ssim = np.mean(results_ssim)
+        overall_ie = np.mean(results_ie)
         print(f"\nOverall Average PSNR across all clips: {overall_psnr:.2f}")
         print(f"\nOverall Average LPIPS across all clips: {overall_lpips:.2f}")
         print(f"\nOverall Average SSIM across all clips: {overall_ssim:.2f}")
+        print(f"\nOverall Average IE across all clips: {overall_ie:.2f}")
         print(f"Number of clips processed: {len(results_psnr)}")
     else:
         print("No valid results obtained")
