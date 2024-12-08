@@ -11,6 +11,7 @@ from skimage.color import rgb2yuv
 import lpips
 from torchvision import transforms
 from PIL import Image
+from skimage.metrics import structural_similarity as ssim
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -78,19 +79,45 @@ def calculate_psnr(pred_frame, gt_frame):
     PIXEL_MAX = 255.0
     return 20 * math.log10(PIXEL_MAX / math.sqrt(mse))
 
-def load_image_lpips(image_path):
-    # img = Image.open(image_path).convert('RGB')
-    img = Image.fromarray(image_path)
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-    ])
-    return transform(img).unsqueeze(0)
+def calculate_ssim(img1, img2):
+    """Calculate SSIM (Structural Similarity Index) between two loaded images."""
+    # Ensure inputs are numpy arrays
+    if isinstance(img1, torch.Tensor):
+        img1 = img1.cpu().numpy().transpose(1, 2, 0)
+    if isinstance(img2, torch.Tensor):
+        img2 = img2.cpu().numpy().transpose(1, 2, 0)
+    
+    # Ensure the images are in the correct range [0, 1]
+    img1 = img1.astype(float) / 255 if img1.max() > 1 else img1
+    img2 = img2.astype(float) / 255 if img2.max() > 1 else img2
+    
+    # Calculate SSIM
+    ssim_value = ssim(img1, img2, data_range=1.0, channel_axis=2, multichannel=True)
+    return ssim_value
 
-def lpips(img0, img1):
-    img0 = load_image_lpips(img0)
-    img1 = load_image_lpips(img1)
-    return loss_fn_alex(img0, img1).item()
+def calculate_lpips(img1, img2):
+    """Calculate LPIPS between two loaded images."""
+    # Ensure inputs are torch tensors
+    if not isinstance(img1, torch.Tensor):
+        img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
+    if not isinstance(img2, torch.Tensor):
+        img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
+    
+    # Normalize to [-1, 1]
+    img1 = img1 * 2 - 1
+    img2 = img2 * 2 - 1
+    
+    # Add batch dimension if not present
+    if img1.dim() == 3:
+        img1 = img1.unsqueeze(0)
+    if img2.dim() == 3:
+        img2 = img2.unsqueeze(0)
+    
+    # Calculate LPIPS
+    with torch.no_grad():
+        lpips_value = loss_fn_alex(img1, img2)
+    
+    return lpips_value.item()
 
 def benchmark_clip(clip_number):
     """Benchmark a single clip."""
@@ -101,6 +128,7 @@ def benchmark_clip(clip_number):
     
     psnr_list = []
     lpips_list = []
+    ssim_list = []
     frame_files = sorted(os.listdir(clip_dir))
     
     # Process frames with stride 4
@@ -133,29 +161,38 @@ def benchmark_clip(clip_number):
             pred_np = (np.round(pred.detach().cpu().numpy().transpose(1, 2, 0) * 255)).astype('uint8')
             psnr = calculate_psnr(pred_np, gt)
             psnr_list.append(psnr)
-            lpips_list.append(lpips(pred_np, gt))
+            lpips_list.append(calculate_lpips(pred_np, gt))
+            ssim_list.append(calculate_ssim(img0, img1))
     
-    return np.mean(psnr_list) if psnr_list else None, np.mean(lpips_list) if lpips_list else None
+    return np.mean(psnr_list) if psnr_list else None, np.mean(lpips_list) if lpips_list else None, np.mean(ssim_list) if ssim_list else None
 
 def main():
     """Main function to run benchmarking across all clips."""
     results_psnr = []
     results_lpips = []
+    results_ssim = []
     
     for clip_num in range(CLIP_START, CLIP_END + 1):
         print(f"Processing clip {clip_num}...")
-        avg_psnr, avg_lpips = benchmark_clip(clip_num)
+        avg_psnr, avg_lpips, avg_ssim = benchmark_clip(clip_num)
         if avg_psnr is not None:
             results_psnr.append(avg_psnr)
-            if avg_lpips is not None:
-                results_lpips.append(avg_lpips)
-                print(f"Clip {clip_num} Average PSNR: {avg_psnr:.2f}, Average LPIPS: {avg_lpips:.2f}")
+        if avg_lpips is not None:
+            results_lpips.append(avg_lpips)
+        if avg_ssim is not None:
+            results_ssim.append(avg_ssim)
+        if avg_psnr is not None and avg_lpips is not None and avg_ssim is not None:
+            print(f"Clip {clip_num} Average PSNR: {avg_psnr:.2f}, Average LPIPS: {avg_lpips:.2f}, Average SSIM: {avg_ssim:.2f}")
+        else:
+            print(f"Clip {clip_num} had no valid results.")
     
-    if results:
+    if results_psnr:
         overall_psnr = np.mean(results_psnr)
         overall_lpips = np.mean(results_lpips)
+        overall_ssim = np.mean(results_ssim)
         print(f"\nOverall Average PSNR across all clips: {overall_psnr:.2f}")
         print(f"\nOverall Average LPIPS across all clips: {overall_lpips:.2f}")
+        print(f"\nOverall Average SSIM across all clips: {overall_ssim:.2f}")
         print(f"Number of clips processed: {len(results_psnr)}")
     else:
         print("No valid results obtained")
