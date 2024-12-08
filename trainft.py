@@ -3,6 +3,7 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split, Dataset
 from torchvision.transforms import ToTensor
 from train_log.RIFE_HDv3 import Model
@@ -73,45 +74,89 @@ def freeze_layers(model):
     for name, param in model.flownet.named_parameters():
         print(f"{name}: {'Frozen' if not param.requires_grad else 'Trainable'}")
 
+def human_loss(pred_smpl, gt_smpl):
+    """
+    Calculate the human loss as described in the Humans in 4D paper.
+    """
+    # SMPL parameter losses
+    pose_loss = F.mse_loss(pred_smpl['pose'], gt_smpl['pose'])
+    shape_loss = F.mse_loss(pred_smpl['shape'], gt_smpl['shape'])
+    
+    # 3D joint loss
+    joint_loss = F.l1_loss(pred_smpl['joints3d'], gt_smpl['joints3d'])
+    
+    # 2D joint loss (assuming you have a perspective projection function)
+    pred_joints2d = perspective_projection(pred_smpl['joints3d'], pred_smpl['camera'])
+    gt_joints2d = perspective_projection(gt_smpl['joints3d'], gt_smpl['camera'])
+    joint2d_loss = F.l1_loss(pred_joints2d, gt_joints2d)
+    
+    # Combine losses
+    total_loss = pose_loss + shape_loss + joint_loss + joint2d_loss
+    
+    return total_loss
 
-# Training function
+def generate_smpl_params(image):
+    """
+    Generate SMPL parameters from an image.
+    This is a placeholder function - you need to implement this using a pre-trained model.
+    """
+    # Placeholder implementation
+    return {
+        'pose': torch.randn(24, 3),
+        'shape': torch.randn(10),
+        'joints3d': torch.randn(24, 3),
+        'camera': torch.randn(3)
+    }
+
+def perspective_projection(joints3d, camera):
+    """
+    Perform perspective projection of 3D joints.
+    This is a placeholder function - you need to implement this.
+    """
+    # Placeholder implementation
+    return joints3d[:, :2]
+
 def train_model(model, train_loader, val_loader, device, epochs=10, learning_rate=1e-4):
     model.device()
     model.train()
 
-    # Collect trainable parameters manually
     trainable_params = [param for name, param in model.flownet.named_parameters() if param.requires_grad]
-
-    # Define optimizer and loss function
     optimizer = optim.Adam(trainable_params, lr=learning_rate)
     criterion = nn.L1Loss()
 
-    # Training loop
     for epoch in range(epochs):
         epoch_loss = 0.0
         print(f"Epoch {epoch + 1}/{epochs}")
 
         for batch_idx, (data, gt) in enumerate(train_loader):
             data, gt = data.to(device), gt.to(device)
-
-            # Split concatenated inputs
             img0, img1 = data[:, :3], data[:, 3:]
 
-            # Zero the parameter gradients
             optimizer.zero_grad()
 
             # Forward pass
             pred = model.inference(img0, img1)
 
-            # Compute loss
-            loss = criterion(pred, gt)
-            epoch_loss += loss.item()
+            # Compute RIFE loss
+            rife_loss = criterion(pred, gt)
+
+            # Generate SMPL parameters
+            pred_smpl = generate_smpl_params(pred)
+            gt_smpl = generate_smpl_params(gt)
+
+            # Compute human loss
+            human_loss_value = human_loss(pred_smpl, gt_smpl)
+
+            # Combine losses
+            total_loss = rife_loss + 0.1 * human_loss_value  # Adjust the weight as needed
+
+            epoch_loss += total_loss.item()
 
             # Backward pass and optimization
-            loss.backward()
+            total_loss.backward()
             optimizer.step()
 
-            print(f"Batch {batch_idx + 1}/{len(train_loader)} - Loss: {loss.item():.4f}")
+            print(f"Batch {batch_idx + 1}/{len(train_loader)} - Total Loss: {total_loss.item():.4f}")
 
         avg_loss = epoch_loss / len(train_loader)
         print(f"Epoch {epoch + 1} completed. Average Loss: {avg_loss:.4f}")
@@ -121,8 +166,6 @@ def train_model(model, train_loader, val_loader, device, epochs=10, learning_rat
 
     print("Training complete.")
 
-
-# Validation function
 def validate_model(model, val_loader, device):
     model.eval()
     val_loss = 0.0
@@ -131,23 +174,30 @@ def validate_model(model, val_loader, device):
     with torch.no_grad():
         for batch_idx, (data, gt) in enumerate(val_loader):
             data, gt = data.to(device), gt.to(device)
-
-            # Split concatenated inputs
             img0, img1 = data[:, :3], data[:, 3:]
 
-            # Perform inference
             pred = model.inference(img0, img1)
 
-            # Compute loss
-            loss = criterion(pred, gt)
-            val_loss += loss.item()
+            # Compute RIFE loss
+            rife_loss = criterion(pred, gt)
 
-            print(f"Validation Batch {batch_idx + 1}/{len(val_loader)} - Loss: {loss.item():.4f}")
+            # Generate SMPL parameters
+            pred_smpl = generate_smpl_params(pred)
+            gt_smpl = generate_smpl_params(gt)
+
+            # Compute human loss
+            human_loss_value = human_loss(pred_smpl, gt_smpl)
+
+            # Combine losses
+            total_loss = rife_loss + 0.1 * human_loss_value  # Adjust the weight as needed
+
+            val_loss += total_loss.item()
+
+            print(f"Validation Batch {batch_idx + 1}/{len(val_loader)} - Total Loss: {total_loss.item():.4f}")
 
     avg_val_loss = val_loss / len(val_loader)
     print(f"Validation completed. Average Loss: {avg_val_loss:.4f}")
     model.train()
-
 
 # Main script
 if __name__ == "__main__":
