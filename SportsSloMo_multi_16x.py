@@ -38,6 +38,8 @@ FRAME_WIDTH = 1280
 CLIP_START = 7235
 CLIP_END = 7443
 
+loss_fn_alex = lpips.LPIPS(net='alex')
+
 def load_frame(path):
     """Load and preprocess a frame."""
     frame = cv2.imread(path)
@@ -77,7 +79,8 @@ def calculate_psnr(pred_frame, gt_frame):
     return 20 * math.log10(PIXEL_MAX / math.sqrt(mse))
 
 def load_image_lpips(image_path):
-    img = Image.open(image_path).convert('RGB')
+    # img = Image.open(image_path).convert('RGB')
+    img = Image.fromarray(image_path)
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
@@ -136,19 +139,24 @@ def benchmark_clip(clip_number):
 
 def main():
     """Main function to run benchmarking across all clips."""
-    results = []
+    results_psnr = []
+    results_lpips = []
     
     for clip_num in range(CLIP_START, CLIP_END + 1):
         print(f"Processing clip {clip_num}...")
-        avg_psnr = benchmark_clip(clip_num)
+        avg_psnr, avg_lpips = benchmark_clip(clip_num)
         if avg_psnr is not None:
-            results.append(avg_psnr)
-            print(f"Clip {clip_num} Average PSNR: {avg_psnr:.2f}")
+            results_psnr.append(avg_psnr)
+            if avg_lpips is not None:
+                results_lpips.append(avg_lpips)
+                print(f"Clip {clip_num} Average PSNR: {avg_psnr:.2f}, Average LPIPS: {avg_lpips:.2f}")
     
     if results:
-        overall_psnr = np.mean(results)
+        overall_psnr = np.mean(results_psnr)
+        overall_lpips = np.mean(results_lpips)
         print(f"\nOverall Average PSNR across all clips: {overall_psnr:.2f}")
-        print(f"Number of clips processed: {len(results)}")
+        print(f"\nOverall Average LPIPS across all clips: {overall_lpips:.2f}")
+        print(f"Number of clips processed: {len(results_psnr)}")
     else:
         print("No valid results obtained")
 
