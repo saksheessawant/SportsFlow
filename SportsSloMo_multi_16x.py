@@ -194,7 +194,7 @@ def benchmark_clip(clip_number):
             psnr = calculate_psnr(pred_np, gt)
             psnr_list.append(psnr)
             lpips_list.append(calculate_lpips(pred_np, gt))
-            ssim_list.append(calculate_ssim(img0, img1))
+            ssim_list.append(calculate_ssim(pred_np, gt))
             ie_list.append(calculate_ie(pred_np, gt))
     
     return np.mean(psnr_list) if psnr_list else None, np.mean(lpips_list) if lpips_list else None, np.mean(ssim_list) if ssim_list else None, np.mean(ie_list) if ie_list else None
