@@ -7,6 +7,12 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split, Dataset
 from torchvision.transforms import ToTensor
 from train_log.RIFE_HDv3 import Model
+from smpler_x import SMPLerX
+
+# Load the pre-trained SMPLer-X model
+smpler_x = SMPLerX.from_pretrained('SMPLer-X-S32')
+smpler_x.eval()
+smpler_x.to(device)
 
 # Triplet Dataset
 class TripletDataset(Dataset):
@@ -97,15 +103,16 @@ def human_loss(pred_smpl, gt_smpl):
 
 def generate_smpl_params(image):
     """
-    Generate SMPL parameters from an image.
-    This is a placeholder function - you need to implement this using a pre-trained model.
+    Generate SMPL parameters from an image using SMPLer-X.
     """
-    # Placeholder implementation
+    with torch.no_grad():
+        smpl_output = smpler_x(image)
+    
     return {
-        'pose': torch.randn(24, 3),
-        'shape': torch.randn(10),
-        'joints3d': torch.randn(24, 3),
-        'camera': torch.randn(3)
+        'pose': smpl_output.pose,
+        'shape': smpl_output.shape,
+        'joints3d': smpl_output.joints,
+        'camera': smpl_output.camera
     }
 
 def perspective_projection(joints3d, camera):
