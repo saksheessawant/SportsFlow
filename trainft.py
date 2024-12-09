@@ -10,6 +10,7 @@ from train_log.RIFE_HDv3 import Model
 from smpler_x import SMPLerX
 
 # Load the pre-trained SMPLer-X model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 smpler_x = SMPLerX.from_pretrained('SMPLer-X-S32')
 smpler_x.eval()
 smpler_x.to(device)
@@ -101,6 +102,89 @@ def human_loss(pred_smpl, gt_smpl):
     
     return total_loss
 
+class Ternary(torch.nn.Module):
+    def __init__(self):
+        super(Ternary, self).__init__()
+        patch_size = 7
+        out_channels = patch_size * patch_size
+        # Register as a non-learnable buffer
+        self.register_buffer('w', torch.eye(out_channels).reshape((patch_size, patch_size, 1, out_channels)))
+        self.w = self.w.permute(3, 2, 0, 1)  # Reshape the weights correctly
+    
+    def transform(self, img):
+        # Convolution using non-learnable weights
+        patches = F.conv2d(img, self.w, padding=3, bias=None)
+        transf = patches - img  # Subtraction (out-of-place)
+        transf_norm = transf / torch.sqrt(0.81 + transf**2)  # Normalize (safe, out-of-place)
+        return transf_norm
+    
+    def forward(self, img0, img1):
+        t1 = self.transform(img0)
+        t2 = self.transform(img1)
+        # Calculate distance
+        dist = (t1 - t2) ** 2
+        dist_norm = torch.mean(dist / (0.1 + dist), dim=1, keepdim=True)  # Differentiable
+        return dist_norm
+
+census = Ternary().to(device)
+
+class LapLoss(torch.nn.Module):
+    @staticmethod
+    def gauss_kernel(size=5, channels=3):
+        kernel = torch.tensor([[1., 4., 6., 4., 1],
+                               [4., 16., 24., 16., 4.],
+                               [6., 24., 36., 24., 6.],
+                               [4., 16., 24., 16., 4.],
+                               [1., 4., 6., 4., 1.]])
+        kernel /= 256.
+        kernel = kernel.repeat(channels, 1, 1, 1)
+        kernel = kernel.to(device).requires_grad_(True)
+        return kernel
+
+
+    @staticmethod
+    def laplacian_pyramid(img, kernel, max_levels=3):
+        def downsample(x):
+            return x[:, :, ::2, ::2]
+
+        def upsample(x):
+            cc = torch.cat([x, torch.zeros(x.shape[0], x.shape[1], x.shape[2], x.shape[3]).to(device)], dim=3)
+            cc = cc.view(x.shape[0], x.shape[1], x.shape[2]*2, x.shape[3])
+            cc = cc.permute(0,1,3,2)
+            cc = torch.cat([cc, torch.zeros(x.shape[0], x.shape[1], x.shape[3], x.shape[2]*2).to(device)], dim=3)
+            cc = cc.view(x.shape[0], x.shape[1], x.shape[3]*2, x.shape[2]*2)
+            x_up = cc.permute(0,1,3,2)
+            return conv_gauss(x_up, 4*LapLoss.gauss_kernel(channels=x.shape[1]))
+
+        def conv_gauss(img, kernel):
+            img = torch.nn.functional.pad(img, (2, 2, 2, 2), mode='reflect')
+            out = torch.nn.functional.conv2d(img, kernel, groups=img.shape[1])
+            return out
+
+        current = img
+        pyr = []
+        for level in range(max_levels):
+            filtered = conv_gauss(current, kernel)
+            down = downsample(filtered)
+            up = upsample(down)
+            diff = current-up
+            pyr.append(diff)
+            current = down
+        return pyr
+
+    def __init__(self, max_levels=5, channels=3):
+        super(LapLoss, self).__init__()
+        self.max_levels = max_levels
+        self.gauss_kernel = LapLoss.gauss_kernel(channels=channels)
+
+    def forward(self, input, target):
+        pyr_input  = LapLoss.laplacian_pyramid(
+                img=input, kernel=self.gauss_kernel, max_levels=self.max_levels)
+        pyr_target = LapLoss.laplacian_pyramid(
+                img=target, kernel=self.gauss_kernel, max_levels=self.max_levels)
+        return sum(torch.nn.functional.l1_loss(a, b) for a, b in zip(pyr_input, pyr_target))
+
+laploss = LapLoss().to(device)
 def generate_smpl_params(image):
     """
     Generate SMPL parameters from an image using SMPLer-X.
@@ -154,8 +238,14 @@ def train_model(model, train_loader, val_loader, device, epochs=10, learning_rat
             # Compute human loss
             human_loss_value = human_loss(pred_smpl, gt_smpl)
 
+            # Compute census loss
+            census_loss = census(pred, gt).mean()
+
+            # Compute laplacian loss
+            lap_loss = laploss(pred, gt).mean()
+
             # Combine losses
-            total_loss = rife_loss + 0.1 * human_loss_value  # Adjust the weight as needed
+            total_loss = rife_loss + 0.1 * human_loss_value + 0.1*census_loss + 0.1*lap_loss  # Adjust the weight as needed
 
             epoch_loss += total_loss.item()
 
