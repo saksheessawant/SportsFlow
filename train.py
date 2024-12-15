@@ -15,10 +15,22 @@ from torch.utils.data import DataLoader, Dataset
 # from torch.utils.tensorboard import SummaryWriter
 # from torch.utils.data.distributed import DistributedSampler
 
-# device = torch.device("cuda")
-device = torch.device("cpu")
+device = torch.device("cuda")
 
 log_path = 'train_log'
+
+# Freeze early blocks and entry layers, fine-tune the rest
+def freeze_layers(model):
+    for name, param in model.flownet.named_parameters():
+        if "block0" in name or "block1" in name or "block_tea" in name:
+            param.requires_grad = False
+        elif "conv0" in name:
+            param.requires_grad = False
+        else:
+            param.requires_grad = True
+
+    # for name, param in model.flownet.named_parameters():
+    #     print(f"{name}: {'Frozen' if not param.requires_grad else 'Trainable'}")
 
 def get_learning_rate(step):
     if step < 2000:
@@ -50,16 +62,19 @@ def train(model):
     writer_val = None
     step = 0
     nr_eval = 0
-    dataset = VimeoDataset('train')
+    # dataset = VimeoDataset('train')
+    dataset = SportsSloMoDataset('train', data_root='/scratch/rrm9598/hpml/acv/SportsSloMo/SportsSloMo_frames/')
     # sampler = DistributedSampler(dataset)
     # train_data = DataLoader(dataset, batch_size=args.batch_size, num_workers=8, pin_memory=True, drop_last=True, sampler=sampler)
     train_data = DataLoader(dataset, batch_size=args.batch_size, num_workers=8, pin_memory=True, drop_last=True, sampler=None)
     args.step_per_epoch = train_data.__len__()
-    dataset_val = VimeoDataset('validation')
+    # dataset_val = VimeoDataset('validation')
+    dataset_val = SportsSloMoDataset('validation', data_root='/scratch/rrm9598/hpml/acv/SportsSloMo/SportsSloMo_frames/')
+
     val_data = DataLoader(dataset_val, batch_size=16, pin_memory=True, num_workers=8)
     print('training...')
     time_stamp = time.time()
-    for epoch in range(args.epoch):
+    for epoch in range(1, args.epoch + 1):
         # sampler.set_epoch(epoch)
         for i, data in enumerate(train_data):
             data_time_interval = time.time() - time_stamp
@@ -75,23 +90,23 @@ def train(model):
             train_time_interval = time.time() - time_stamp
             time_stamp = time.time()
             # if step % 200 == 1 and local_rank == 0:
-            #     writer.add_scalar('learning_rate', learning_rate, step)
-            #     writer.add_scalar('loss/l1', info['loss_l1'], step)
-            #     writer.add_scalar('loss/tea', info['loss_tea'], step)
-            #     writer.add_scalar('loss/distill', info['loss_distill'], step)
+                # writer.add_scalar('learning_rate', learning_rate, step)
+                # writer.add_scalar('loss/l1', info['loss_l1'], step)
+                # writer.add_scalar('loss/tea', info['loss_tea'], step)
+                # writer.add_scalar('loss/distill', info['loss_distill'], step)
             # if step % 1000 == 1 and local_rank == 0:
-            #     gt = (gt.permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
-            #     mask = (torch.cat((info['mask'], info['mask_tea']), 3).permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
-            #     pred = (pred.permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
-            #     merged_img = (info['merged_tea'].permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
-            #     flow0 = info['flow'].permute(0, 2, 3, 1).detach().cpu().numpy()
-            #     flow1 = info['flow_tea'].permute(0, 2, 3, 1).detach().cpu().numpy()
-            #     for i in range(5):
-            #         imgs = np.concatenate((merged_img[i], pred[i], gt[i]), 1)[:, :, ::-1]
-            #         writer.add_image(str(i) + '/img', imgs, step, dataformats='HWC')
-            #         writer.add_image(str(i) + '/flow', np.concatenate((flow2rgb(flow0[i]), flow2rgb(flow1[i])), 1), step, dataformats='HWC')
-            #         writer.add_image(str(i) + '/mask', mask[i], step, dataformats='HWC')
-            #     writer.flush()
+                # gt = (gt.permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
+                # mask = (torch.cat((info['mask'], info['mask_tea']), 3).permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
+                # pred = (pred.permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
+                # merged_img = (info['merged_tea'].permute(0, 2, 3, 1).detach().cpu().numpy() * 255).astype('uint8')
+                # flow0 = info['flow'].permute(0, 2, 3, 1).detach().cpu().numpy()
+                # flow1 = info['flow_tea'].permute(0, 2, 3, 1).detach().cpu().numpy()
+                # for i in range(5):
+                #     imgs = np.concatenate((merged_img[i], pred[i], gt[i]), 1)[:, :, ::-1]
+                    # writer.add_image(str(i) + '/img', imgs, step, dataformats='HWC')
+                    # writer.add_image(str(i) + '/flow', np.concatenate((flow2rgb(flow0[i]), flow2rgb(flow1[i])), 1), step, dataformats='HWC')
+                    # writer.add_image(str(i) + '/mask', mask[i], step, dataformats='HWC')
+                # writer.flush()
             # if local_rank == 0:
             print('epoch:{} {}/{} time:{:.2f}+{:.2f} loss_l1:{:.4e}'.format(epoch, i, args.step_per_epoch, data_time_interval, train_time_interval, info['loss_l1']))
             step += 1
@@ -132,24 +147,23 @@ def evaluate(model, val_data, nr_eval):
         merged_img = (merged_img.permute(0, 2, 3, 1).cpu().numpy() * 255).astype('uint8')
         flow0 = info['flow'].permute(0, 2, 3, 1).cpu().numpy()
         flow1 = info['flow_tea'].permute(0, 2, 3, 1).cpu().numpy()
-        if i == 0 and local_rank == 0:
-            for j in range(10):
-                imgs = np.concatenate((merged_img[j], pred[j], gt[j]), 1)[:, :, ::-1]
-                # writer_val.add_image(str(j) + '/img', imgs.copy(), nr_eval, dataformats='HWC')
-                # writer_val.add_image(str(j) + '/flow', flow2rgb(flow0[j][:, :, ::-1]), nr_eval, dataformats='HWC')
+        # if i == 0 and local_rank == 0:
+        #     for j in range(10):
+        #         imgs = np.concatenate((merged_img[j], pred[j], gt[j]), 1)[:, :, ::-1]
+        #         writer_val.add_image(str(j) + '/img', imgs.copy(), nr_eval, dataformats='HWC')
+        #         writer_val.add_image(str(j) + '/flow', flow2rgb(flow0[j][:, :, ::-1]), nr_eval, dataformats='HWC')
     
     eval_time_interval = time.time() - time_stamp
 
     # if local_rank != 0:
-    #    return
+    #     return
     # writer_val.add_scalar('psnr', np.array(psnr_list).mean(), nr_eval)
     # writer_val.add_scalar('psnr_teacher', np.array(psnr_list_teacher).mean(), nr_eval)
-    return
         
 if __name__ == "__main__":    
     parser = argparse.ArgumentParser()
     # parser.add_argument('--epoch', default=300, type=int)
-    parser.add_argument('--epoch', default=2, type=int)
+    parser.add_argument('--epoch', default=1, type=int)
     parser.add_argument('--batch_size', default=16, type=int, help='minibatch size')
     # parser.add_argument('--local_rank', default=0, type=int, help='local rank')
     # parser.add_argument('--world_size', default=4, type=int, help='world size')
@@ -164,7 +178,10 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
     # model = Model(args.local_rank)
     model = Model()
+    print('loading pretrained model...')
     model.load_model('train_log', -1)
+    print('freezing model layers...')
+    freeze_layers(model)
     # train(model, args.local_rank)
-    train(model)    
-    # print("starting training...")
+    train(model)
+        

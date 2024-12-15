@@ -114,19 +114,21 @@ class IFNet(nn.Module):
         )
 
     def forward(self, x, timestep=0.5, scale_list=[8, 4, 2, 1], training=False, fastmode=True, ensemble=False):
-        # print('X Shape : ', x.shape)
-        img0 = x[:, :3]
-        img1 = x[:, 3:6]
-        # print('Image 0 Shape : ', img0.shape)
-        # print('Image 1 Shape : ', img1.shape)
         if training == False:
             channel = x.shape[1] // 2
             img0 = x[:, :channel]
             img1 = x[:, channel:]
+        else:
+            # print("X shape", x.shape)
+            img0 = x[:, :3]
+            img1 = x[:, 3:6]
+            # print("Image 0 shape", img0.shape)
+            # print("Image 1 shape", img1.shape)
         if not torch.is_tensor(timestep):
             timestep = (x[:, :1].clone() * 0 + 1) * timestep
         else:
             timestep = timestep.repeat(1, 1, img0.shape[2], img0.shape[3])
+        
         f0 = self.encode(img0[:, :3])
         f1 = self.encode(img1[:, :3])
         flow_list = []

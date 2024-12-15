@@ -9,6 +9,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from train_log.IFNet_HDv3 import *
 import torch.nn.functional as F
 from model.loss import *
+# from model.laplacian import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -19,7 +20,8 @@ class Model:
         self.optimG = AdamW(self.flownet.parameters(), lr=1e-6, weight_decay=1e-4)
         self.epe = EPE()
         self.version = 4.8
-        # self.vgg = VGGPerceptualLoss().to(device)
+        # self.laploss = LapLoss()
+        self.vgg = VGGPerceptualLoss().to(device)
         self.sobel = SOBEL()
         if local_rank != -1:
             self.flownet = DDP(self.flownet, device_ids=[local_rank], output_device=local_rank)
@@ -73,11 +75,13 @@ class Model:
         flow, mask, merged = self.flownet(torch.cat((imgs, gt), 1), training=training)
         loss_l1 = (merged[3] - gt).abs().mean()
         loss_smooth = self.sobel(flow[3], flow[3]*0).mean()
-        # loss_vgg = self.vgg(merged[2], gt)
+        # loss_lap = self.laploss(merged[3], gt)
+        loss_vgg = self.vgg(merged[3], gt)
         if training:
             self.optimG.zero_grad()
             # loss_G = loss_l1 + loss_cons + loss_smooth * 0.1
-            loss_G = loss_l1 + loss_smooth * 0.1
+            # loss_G = loss_l1 + loss_smooth * 0.1 + loss_lap + loss_vgg
+            loss_G = loss_l1 + loss_smooth * 0.1 + loss_vgg
             loss_G.backward()
             self.optimG.step()
         else:
@@ -87,5 +91,7 @@ class Model:
             'flow': flow[3][:, :2],
             'loss_l1': loss_l1,
             # 'loss_cons': loss_cons,
+            'loss_vgg': loss_vgg,
+            # 'loss_lap' : loss_lap,
             'loss_smooth': loss_smooth,
             }
